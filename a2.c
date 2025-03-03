@@ -5,6 +5,9 @@
 
 #define ALLPID -1
 #define MAXLENGTH 256
+#define NOTHRESHOLD 0
+#define NOTHING -2
+#define END -3
 
 typedef struct FD {
 	int fd;
@@ -19,9 +22,35 @@ typedef struct PROCESS {
 	FD* FDarr;
 } PROCESS;
 
+typedef struct DISPLAYINFO {
+	int isProcessFD;
+	int isSystemWide;
+	int isVnode;
+	int isComposite;
+	int isSummary;
+	int outputTXT;
+	int outputBIN;
+
+	int pid;
+	int threshold;
+} DISPLAYINFO;
+
+
+int validProcess(int pid) {
+	if (pid == ALLPID) {
+		return 1;
+	}
+	return 0;
+}
+
 
 FD* createFD(int fd, char file[MAXLENGTH], int inode) {
 	FD* newFD = malloc(sizeof(FD));
+	if (newFD == NULL) {
+		fprintf(stderr, "Error: failed to malloc");
+		exit(1);
+	}
+
 	newFD->fd = fd;
 	strcpy(newFD->file,file);
 	newFD->inode = inode;
@@ -32,11 +61,33 @@ FD* createFD(int fd, char file[MAXLENGTH], int inode) {
 
 PROCESS* createPROCESS(int pid) {
 	PROCESS* newProcess = malloc(sizeof(PROCESS));
+	if (newProcess == NULL) {
+		fprintf(stderr, "Error: failed to malloc");
+		exit(1);
+	}
+
 	newProcess->pid = pid;
 	newProcess->numFd = 0;
 	newProcess->FDarr = NULL;
 
 	return newProcess;
+}
+
+DISPLAYINFO* createDISPLAYINFO() {
+	DISPLAYINFO* newDisplayInfo = malloc(sizeof(DISPLAYINFO));
+
+	newDisplayInfo->isProcessFD = 0;
+	newDisplayInfo->isSystemWide = 0;
+	newDisplayInfo->isVnode = 0;
+	newDisplayInfo->isComposite = 0;
+	newDisplayInfo->isSummary = 0;
+	newDisplayInfo->outputTXT = 0;
+	newDisplayInfo->outputBIN = 0;
+
+	newDisplayInfo->pid = ALLPID;
+	newDisplayInfo->threshold = NOTHRESHOLD;
+
+	return newDisplayInfo;
 }
 
 void freeFD(FD* fd) {
@@ -45,9 +96,16 @@ void freeFD(FD* fd) {
 	}
 }
 
-void freePROCESS(PROCESS* process) {
-	free(process->FDarr);
-	free(process);
+void freeAllPROCESS(PROCESS** processes, int processCount) {
+	for (int i = 0; i < processCount; i++) {
+		free(processes[i]->FDarr);
+		free(processes[i]);
+	}
+	
+}
+
+void freeDISPLAYINFO(DISPLAYINFO* displayInfo) {
+	free(displayInfo);
 }
 
 void displayProcessFD(PROCESS* process) {
@@ -98,125 +156,214 @@ void displayComposite(PROCESS* process) {
 	printf("=============================================\n");
 }
 
-void displaySummary(PROCESS** processArr, int numProcess) {
+void writeCompositeTXT(PROCESS* process) {
+	FILE* file = fopen("compositeTable.txt", "w");
+	if (file == NULL) {
+		fprintf(stderr, "Error: could not write to compositeTable.txt");
+		exit(1);
+	}
+
+	FD* fd = process->FDarr;
+
+	fprintf(file, "\n\n");
+	fprintf(file, "PID			FD			Filename			Inode\n");
+	fprintf(file, "==================================================\n");
+	for (FD* i = fd; i != NULL; i = i->next) {
+		fprintf(file, "%d   %d   %s   %d\n", process->pid, i->fd, i->file, i->inode);
+	}
+	fprintf(file, "==================================================\n");
+
+	int isClosed = fclose(file);
+	if (isClosed != 0) {
+		fprintf(stderr, "Error: could not close compositeTable.txt");
+		exit(1);
+	}
+}
+
+void writeCompositeBIN(PROCESS* process) {
+	FILE* file = fopen("compositeTable.bin", "wb");
+
+	if (file == NULL) {
+		fprintf(stderr, "Error: could not write to compositeTable.bin");
+		exit(1);
+	}
+
+	FD* fd = process->FDarr;
+
+	for (FD* i = fd; i != NULL; i = i->next) {
+		fwrite(&process->pid, sizeof(int), 1, file);
+		fwrite(&i->fd, sizeof(int), 1, file);
+		fwrite(i->file, sizeof(char), MAXLENGTH, file);
+		fwrite(&i->inode, sizeof(int), 1, file);
+	}
+	int end = END;
+	fwrite(&end, sizeof(int), 1, file);
+
+	int isClosed = fclose(file);
+	if (isClosed != 0) {
+		fprintf(stderr, "Error: could not close compositeTable.bin");
+		exit(1);
+	}
+}
+
+void displaySummary(PROCESS** processes, int numProcess) {
 	printf("\n\n");
 	printf("Summary Table\n");
 	printf("=============\n");
 
 	for (int i = 0; i< numProcess; i++) {
-		int pid = processArr[i]->pid;
-		int numFd = processArr[i]->numFd;
+		int pid = processes[i]->pid;
+		int numFd = processes[i]->numFd;
 		printf("%d : %d FD\n", pid, numFd);
 	}
 	printf("=============\n");
 }
 
+void displayOffending(PROCESS** processes, int processNumber, int threshold) {
+	printf("\n\n");
+	printf("Offending Processes -- Threshold : %d\n", threshold);
+	for (int i = 0; i < processNumber; i++) {
+		int pid = processes[i]->pid;
+		int numFd = processes[i]->numFd;
+		if (numFd >= threshold) {
+			printf("%d : %d FD\n", pid, numFd);
+		}
+		
+	}
+}
+
 int getAllProcesses(PROCESS** processArr) {
 	int processCount = 0;
 
-	//PROCESS* process = createPROCESS(pid);
-	//getFD(process);
+	//PROCESS* process = getProcess(pid);
 
 
 	return processCount;
 }
 
-void getFD(PROCESS* process) {
-
-}
-
-void display(int pid, int isProcessFD, int isSystemWide, int isVnode, int isComposite, int isSummary) {
+PROCESS* getProcess(int pid) {
 	PROCESS* process = createPROCESS(pid);
-	getFD(process);
+	return process;
 
-	if (isProcessFD == 1) {displayProcessFD(process);}
-	else if (isSystemWide == 1) {displaySystemWide(process);}
-	else if (isVnode == 1) {displayVnode(process);}
-	else if (isComposite == 1) {displayComposite(process);}
-	else if (isSummary == 1) {
-		PROCESS** allProcesses;
-		int processCount = getAllProcesses(allProcesses);
-		displaySummary(allProcesses, processCount);
-	}
 }
 
-void displayAll(int isProcessFD, int isSystemWide, int isVnode, int isComposite, int isSummary) {
+void display(DISPLAYINFO* displayInfo) {
 
 	PROCESS** allProcesses;
 	int processCount = getAllProcesses(allProcesses);
 
-	if (isSummary == 1) {
-		displaySummary(allProcesses, processCount);
-	}
-	for (int i = 0; i < processCount; i++ ) {
-		PROCESS* process = *(allProcesses+i);
-		if (isProcessFD == 1) {displayProcessFD(process);}
-		else if (isSystemWide == 1) {displaySystemWide(process);}
-		else if (isVnode == 1) {displayVnode(process);}
-		else if (isComposite == 1) {displayComposite(process);}
-	}
-	
+	if (displayInfo->pid == ALLPID) {
+		if (displayInfo->isSummary == 1) {displaySummary(allProcesses, processCount);}
+		if (displayInfo->threshold != NOTHRESHOLD) {displayOffending(allProcesses, processCount,displayInfo->threshold);}
 
+		for (int i = 0; i < processCount; i++ ) {
+			PROCESS* process = *(allProcesses+i);
+			if (displayInfo->isProcessFD == 1) {displayProcessFD(process);}
+			if (displayInfo->isSystemWide == 1) {displaySystemWide(process);}
+			if (displayInfo->isVnode == 1) {displayVnode(process);}
+			if (displayInfo->isComposite == 1) {displayComposite(process);}
+			if (displayInfo->outputTXT == 1) {writeCompositeTXT(process);}
+			if (displayInfo->outputBIN == 1) {writeCompositeBIN(process);}
+		}
+	}
+	else {
+		PROCESS* process = getProcess(displayInfo->pid);
+
+		if (displayInfo->isProcessFD == 1) {displayProcessFD(process);}
+		if (displayInfo->isSystemWide == 1) {displaySystemWide(process);}
+		if (displayInfo->isVnode == 1) {displayVnode(process);}
+		if (displayInfo->isComposite == 1) {displayComposite(process);}
+		if (displayInfo->isSummary == 1) {displaySummary(allProcesses, processCount);}
+		if (displayInfo->threshold != NOTHRESHOLD) {displayOffending(allProcesses, processCount, displayInfo->threshold);}
+		if (displayInfo->outputTXT == 1) {writeCompositeTXT(process);}
+		if (displayInfo->outputBIN == 1) {writeCompositeBIN(process);}
+		freeAllPROCESS(&process, 1);
+	}
+
+	freeAllPROCESS(allProcesses, processCount);
+
+	
+}
+
+
+int getThreshold(char* arg) {
+	if (strlen(arg) > 12) {
+		arg[11] = '\0';
+	}
+	else {
+		return NOTHING;
+	}
+
+	if (strcmp(arg, "--threshold") != 0) {
+		return NOTHING;
+	}
+
+	return strtol(arg+12, NULL, 10);
+}
+
+DISPLAYINFO* processArguments(int argc, char** argv) {
+	DISPLAYINFO* displayInfo = createDISPLAYINFO();
+
+	if (argc == 1) {
+		displayInfo->isComposite = 1;
+		displayInfo->pid = ALLPID;
+	}
+	else if (argc == 2 && strtol(argv[1], NULL, 10) > 0) {
+		displayInfo->pid = strtol(argv[1], NULL, 10);
+		displayInfo->isProcessFD = 1;
+	    displayInfo->isSystemWide = 1;
+	    displayInfo->isVnode = 1;
+	    displayInfo->isComposite = 1;
+	}
+	else {
+		for (int i = 1; i < argc; i++) {
+			if (strcmp(argv[i], "--per-process") == 0 ) {
+				displayInfo->isProcessFD = 1;
+			}
+			else if (strcmp(argv[i], "--systemWide") == 0 ) {
+				displayInfo->isSystemWide = 1;
+			}
+			else if (strcmp(argv[i], "--Vnodes") == 0 ) {
+				displayInfo->isVnode = 1;
+			}
+			else if (strcmp(argv[i], "--composite") == 0 ) {
+				displayInfo->isComposite = 1;
+			}
+			else if (strcmp(argv[i], "--summary") == 0 ) {
+				displayInfo->isSummary = 1;
+			}
+			else if (i == 0 && strtol(argv[i], NULL, 10) > 0) {
+				displayInfo->pid = strtol(argv[i], NULL, 10);
+			}
+			else if (getThreshold(argv[i]) != NOTHING) {
+				displayInfo->threshold = getThreshold(argv[i]);
+			}
+			else {
+				fprintf(stderr, "Error: invalid arguments");
+				exit(1);
+			}
+		}
+	}
+
+	return displayInfo;
 
 }
 
 
 
 int test(int argc, char** argv) {
-	int isProcessFD = 0;
-	int isSystemWide = 0;
-	int isVnode = 0;
-	int isComposite = 0;
-	int isSummary = 0;
 
-	int pid = ALLPID;
+	DISPLAYINFO* displayInfo = processArguments(argc, argv);
 
-	if (argc == 1) {
-		isComposite = 1;
-		pid = ALLPID;
-	}
-	else if (argc == 2 && strtol(argv[1], NULL, 10) > 0) {
-		pid = strtol(argv[1], NULL, 10);
-		isProcessFD = 1;
-	    isSystemWide = 1;
-	    isVnode = 1;
-	    isComposite = 1;
+	if (validProcess(displayInfo->pid)) {
+		display(displayInfo);
 	}
 	else {
-		for (int i = 1; i < argc; i++) {
-			if (strcmp(argv[i], "--per-process") == 0 ) {
-				isProcessFD = 1;
-			}
-			else if (strcmp(argv[i], "--systemWide") == 0 ) {
-				isSystemWide = 1;
-			}
-			else if (strcmp(argv[i], "--Vnodes") == 0 ) {
-				isVnode = 1;
-			}
-			else if (strcmp(argv[i], "--composite") == 0 ) {
-				isComposite = 1;
-			}
-			else if (strcmp(argv[i], "--summary") == 0 ) {
-				isSummary = 1;
-			}
-			else if (i == 0 && strtol(argv[i], NULL, 10) > 0) {
-				pid = strtol(argv[i], NULL, 10);
-			}
-			else {
-				fprintf(stdout, "Error: invalid arguments");
-				exit(1);
-			}
-		}
+		fprintf(stderr, "Error: invalid processID");
+		exit(1);
 	}
 
-	if (pid == ALLPID) {
-		displayAll(isProcessFD, isSystemWide, isVnode, isComposite, isSummary);
-	}
-	else {
-		display(pid, isProcessFD, isSystemWide, isVnode, isComposite, isSummary);
-	}
-	
-
+	freeDISPLAYINFO(displayInfo);
 
 	return 0;
 }
