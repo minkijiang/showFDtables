@@ -8,9 +8,11 @@
 #include <stdbool.h>
 #include <sys/stat.h>
 
-#define ALLPID -1
+#include <time.h>
+
 #define MAXLENGTH 256
 #define NOTHRESHOLD 0
+#define ALLPID -1
 #define NOTHING -2
 #define END -3
 
@@ -138,8 +140,9 @@ bool isValidProcess(int pid) {
 		return true;
 	}
 
-
 	char* processDirectory = getProcessDirectory(pid);
+	strcat(processDirectory, "/fd");
+
 	DIR* dir = opendir(processDirectory);
 	free(processDirectory);
 
@@ -302,9 +305,7 @@ void displayOffending(PROCESS** processes, int processNumber, int threshold) {
 int getFdCount(int pid) {
 	char directoryName[MAXLENGTH];
 
-	char* processDirectory = getProcessDirectory(pid);
-
-	strcpy(directoryName, processDirectory);
+	strcpy(directoryName, getProcessDirectory(pid));
 	strcat(directoryName, "/fd");
 
 	DIR* dir = opendir(directoryName);
@@ -515,8 +516,6 @@ DISPLAYINFO* processArguments(int argc, char** argv) {
 
 }
 
-
-
 int test(int argc, char** argv) {
 
 	DISPLAYINFO* displayInfo = processArguments(argc, argv);
@@ -534,9 +533,67 @@ int test(int argc, char** argv) {
 	return 0;
 }
 
+void wait_ms(int tdelay) {
+	clock_t start_time = clock();
+  	while ((clock() - start_time) * 1000 / CLOCKS_PER_SEC < tdelay/1000000);
+}
 
 
 int main() {
+
+	int pid = fork();
+
+	if (pid != 0) {
+		
+		PROCESS* process = createPROCESS(pid);
+
+		char directoryName[MAXLENGTH];
+		strcpy(directoryName, process->processDirectory);
+		strcat(directoryName, "/fd");
+
+		DIR* dir = opendir(directoryName);
+		if (dir == NULL) {
+			fprintf(stderr, "failed to read process directory");
+			exit(1);
+		}
+
+		process->fdCount = getFdCount(pid);
+		process->FDarr = malloc((process->fdCount)*sizeof(FD));
+
+		skip(dir);
+		DIRECTORYINFO directoryInfo = readdir(dir);
+		int fd = strtol(directoryInfo->d_name, NULL, 10);
+
+		char target[MAXLENGTH];
+
+		char link[MAXLENGTH];
+		strcpy(link, directoryName);
+		strcat(link, "/");
+		strcat(link, directoryInfo->d_name);
+
+
+		printf("%ld\n", readlink(link, target, (MAXLENGTH-1)*sizeof(char)) );
+		printf("%s\n", target);
+
+
+		struct stat* fileStat;
+
+		if (stat(link, fileStat) == -1) {
+			perror("stat failed");
+			return 1;
+		}
+		else {
+			printf("%d\n", stat(link, fileStat) );
+		}
+
+		//PROCESS* process = getProcess(pid);
+		//printf("%d", process->fdCount);
+	}
+	else {
+		wait_ms(2000000);
+	}
+	
+
 
 	return 0;
 }
